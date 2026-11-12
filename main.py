@@ -6,20 +6,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ven
 import makefun_bars
 
 SYMBOL = "CBBTC"
-LOOKBACK = 20
-ENTRY_Z = -0.30          # enter on any mild wash-out
-TAKE_PCT = 0.004         # take 0.4% bounce
-EMERGENCY_STOP = 0.10    # 10% backstop only
-COOLDOWN_BARS = 5
+EMA_N = 120
+WARMUP = EMA_N + 1
+ENTRY_EDGE = 0.002        # price must clear the EMA by 0.2%
+TAKE_PCT = 0.006          # take 0.6%
+STOP_PCT = 0.015          # stop 1.5%
+MAX_HOLD = 240            # bars
+COOLDOWN = 10             # bars after an exit
 MAX_SLIPPAGE_BPS = 80
-MIN_TRADE = 1_000_000    # 1 USDC
+MIN_TRADE = 1_000_000     # 1 USDC
 
-_closes = []
+_ema = None
+_seen = 0
+_held = 0
 _last_exit_seq = -999
 
 
 def on_batch(state, batch):
-    global _closes, _last_exit_seq
+    global _ema, _seen, _held, _last_exit_seq
 
     bar = None
     for b in batch["bars"]:
@@ -29,21 +33,23 @@ def on_batch(state, batch):
     if bar is None:
         return []
 
-    closes_before = list(_closes)
     c = int(bar["c"])
-    _closes.append(c)
-    if len(_closes) > LOOKBACK:
-        del _closes[0]
+    _seen += 1
+    if _ema is None:
+        _ema = float(c)
+    else:
+        k = 2.0 / (EMA_N + 1)
+        _ema = c * k + _ema * (1.0 - k)
 
     held = state.positions.get(SYMBOL)
     if held is not None and int(held.qty) > 0:
+        _held += 1
         qty = int(held.qty)
         cost = int(held.cost)
         hi_val = state.value(SYMBOL, qty, int(bar["h"]))
         lo_val = state.value(SYMBOL, qty, int(bar["l"]))
-        hit_take = hi_val * 1000 >= cost * 1004
-        hit_stop = lo_val * 100 <= cost * 90
-        if hit_take or hit_stop:
+        if hi_val * 1000 >= cost * 1006 or lo_val * 100 <= cost * 985 or _held >= MAX_HOLD:
+            _held = 0
             _last_exit_seq = state.seq
             return [{
                 "side": "sell",
@@ -53,18 +59,11 @@ def on_batch(state, batch):
             }]
         return []
 
-    if state.warming_up or len(closes_before) < LOOKBACK:
+    if state.warming_up or _seen < WARMUP:
         return []
-    if state.seq - _last_exit_seq < COOLDOWN_BARS:
+    if state.seq - _last_exit_seq < COOLDOWN:
         return []
-
-    mean = sum(closes_before) / len(closes_before)
-    var = sum((x - mean) ** 2 for x in closes_before) / len(closes_before)
-    std = var ** 0.5
-    if std <= 0:
-        return []
-    z = (c - mean) / std
-    if z > ENTRY_Z:
+    if c <= _ema * (1.0 + ENTRY_EDGE):
         return []
 
     spend = state.cash
@@ -74,6 +73,7 @@ def on_batch(state, batch):
     if spend < MIN_TRADE:
         return []
 
+    _held = 0
     return [{
         "side": "buy",
         "symbol": SYMBOL,

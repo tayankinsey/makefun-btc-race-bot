@@ -48,7 +48,7 @@ def on_batch(state, batch):
         cost = int(held.cost)
         hi_val = state.value(SYMBOL, qty, int(bar["h"]))
         lo_val = state.value(SYMBOL, qty, int(bar["l"]))
-        if hi_val * 1000 >= cost * 1006 or lo_val * 100 <= cost * 985 or _held >= MAX_HOLD:
+        if hi_val * 1000 >= cost * 1006 or lo_val * 1000 <= cost * 985 or _held >= MAX_HOLD:
             _held = 0
             _last_exit_seq = state.seq
             return [{

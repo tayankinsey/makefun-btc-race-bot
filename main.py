@@ -38,11 +38,11 @@ def on_batch(state, batch):
     held = state.positions.get(SYMBOL)
     if held is not None and int(held.qty) > 0:
         qty = int(held.qty)
-        entry = int(held.cost) / qty if qty > 0 else c
-        hi = int(bar["h"])
-        lo = int(bar["l"])
-        hit_take = hi >= entry * (1 + TAKE_PCT)
-        hit_stop = lo <= entry * (1 - EMERGENCY_STOP)
+        cost = int(held.cost)
+        hi_val = state.value(SYMBOL, qty, int(bar["h"]))
+        lo_val = state.value(SYMBOL, qty, int(bar["l"]))
+        hit_take = hi_val * 1000 >= cost * 1004
+        hit_stop = lo_val * 100 <= cost * 90
         if hit_take or hit_stop:
             _last_exit_seq = state.seq
             return [{
